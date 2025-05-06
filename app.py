@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import os
+from datetime import datetime, time, timedelta, date
 
 # --- Cấu hình trang (Tùy chọn) ---
 st.set_page_config(
@@ -56,10 +57,8 @@ if model is not None and preprocessor is not None:
     with col1:
         distance = st.number_input("Khoảng cách giao hàng (km)", min_value=0.1, max_value=50.0, value=5.0, step=0.1, format="%.1f")
         prep_time = st.number_input("Thời gian chuẩn bị đơn (phút)", min_value=5, max_value=60, value=15, step=1)
-
         weather_options = ['Clear', 'Foggy', 'Rainy', 'Snowy', 'Windy']
         weather = st.selectbox("Điều kiện thời tiết", options=weather_options, index=0)
-
         traffic_options = ['Low', 'Medium', 'High']
         traffic = st.selectbox("Mức độ giao thông", options=traffic_options, index=1)
 
@@ -67,11 +66,15 @@ if model is not None and preprocessor is not None:
         courier_exp = st.number_input("Kinh nghiệm người giao hàng (năm)", min_value=0, max_value=30, value=2, step=1)
 
         time_options = ['Morning', 'Afternoon', 'Evening', 'Night']
-        time_of_day = st.selectbox("Thời điểm giao hàng", options=time_options, index=1)
+        time_of_day = st.selectbox("Khoảng thời gian giao hàng", options=time_options, index=1)
 
         vehicle_options = ['Bike', 'Scooter', 'Car']
         vehicle_type = st.selectbox("Loại phương tiện", options=vehicle_options, index=1)
 
+        # --- THÊM INPUT THỜI GIAN ĐẶT HÀNG ---
+        # Kết hợp now() và time() để lấy đúng kiểu time
+        default_order_time = datetime.now().time().replace(second=0, microsecond=0)
+        order_time_input = st.time_input("Giờ đặt hàng", value=default_order_time)
 
     # --- Nút dự đoán ---
     predict_button = st.button("Dự đoán", type="primary")
@@ -97,24 +100,50 @@ if model is not None and preprocessor is not None:
 
         # Tạo DataFrame từ input (chỉ 1 hàng)
         # Đảm bảo thứ tự cột khớp với lúc fit preprocessor nếu preprocessor không tự xử lý
-        try:
-            input_df = pd.DataFrame([input_data], columns=original_cols)
-            st.write("Dữ liệu đầu vào:")
-            st.dataframe(input_df)
+        else:
+            try:
+                input_df = pd.DataFrame([input_data], columns=original_cols)
+                st.write("Dữ liệu đầu vào:")
+                st.dataframe(input_df)
 
-            # --- Tiền xử lý dữ liệu input ---
-            input_processed = preprocessor.transform(input_df)
+                # --- Tiền xử lý dữ liệu input ---
+                input_processed = preprocessor.transform(input_df)
 
-            # --- Dự đoán ---
-            prediction = model.predict(input_processed)
-            predicted_time = round(prediction[0], 1) # Lấy kết quả đầu tiên và làm tròn
+                # --- Dự đoán ---
+                prediction = model.predict(input_processed)
+                predicted_time = round(prediction[0], 1) # Lấy kết quả đầu tiên và làm tròn
 
-            # --- Hiển thị kết quả ---
-            st.success(f"**Thời gian giao hàng được dự đoán là: {predicted_time} phút**")
+                # --- TÍNH TOÁN TỔNG THỜI GIAN TỪ LÚC ĐẶT ĐẾN LÚC GIAO ---
+                total_estimated_duration = prep_time + predicted_time
 
-        except Exception as e:
-            st.error(f"Lỗi xảy ra trong quá trình xử lý hoặc dự đoán: {e}")
-            st.error("Vui lòng kiểm tra lại dữ liệu đầu vào và cấu hình.")
+                # --- Hiển thị TỔNG THỜI GIAN dự đoán ---
+                st.subheader("Kết quả dự đoán:")
+                st.info(f"**Tổng thời gian dự kiến cần thiết:** {total_estimated_duration} phút")  # Duration
+
+                # --- TÍNH TOÁN GIỜ NHẬN HÀNG DỰ KIẾN (ETA) ---
+                try:
+                    current_date = date.today()
+                    # Kết hợp ngày và giờ đặt hàng thành đối tượng datetime
+                    order_datetime = datetime.combine(current_date, order_time_input)
+
+                    # Tạo đối tượng timedelta (khoảng thời gian) từ số phút
+                    prep_timedelta = timedelta(minutes=prep_time)
+                    delivery_timedelta = timedelta(minutes=predicted_time)
+
+                    # Tính giờ nhận hàng dự kiến
+                    estimated_arrival_datetime = order_datetime + prep_timedelta + delivery_timedelta
+
+                    # --- Hiển thị GIỜ NHẬN HÀNG dự kiến ---
+                    st.success(
+                        f"**Thời điểm nhận hàng dự kiến:** {estimated_arrival_datetime.strftime('%H:%M ngày %d/%m/%Y')}")  # ETA
+
+                except Exception as calc_e:
+                    st.error(f"Lỗi khi tính toán thời điểm nhận hàng: {calc_e}")
+                    st.write("Kiểm tra lại giá trị ngày/giờ đặt hàng.")
+
+            except Exception as e:
+                st.error(f"Lỗi xảy ra trong quá trình xử lý hoặc dự đoán: {e}")
+                st.error("Vui lòng kiểm tra lại dữ liệu đầu vào và cấu hình.")
 
 else:
     st.warning("Không thể tải mô hình hoặc preprocessor. Vui lòng kiểm tra lại các file .joblib và đường dẫn.")
